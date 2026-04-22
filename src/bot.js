@@ -90,88 +90,130 @@ class AcademicBot {
 
     // ─── ENTRADA PRINCIPAL ────────────────────────────────────────────────────
 
-    async processMessage(msg) {
-        try {
-            // Extrair JID corretamente para Baileys
-            const jid = msg.key.remoteJid;
-            
-            // Extrair texto da mensagem (Baileys)
-            let text = '';
-            if (msg.message?.conversation) {
-                text = msg.message.conversation;
-            } else if (msg.message?.extendedTextMessage?.text) {
-                text = msg.message.extendedTextMessage.text;
-            } else if (msg.message?.imageWithCaption?.caption) {
-                text = msg.message.imageWithCaption.caption;
-            }
+   // src/bot.js - Adicione/modifique esta parte
 
-            if (!text || !text.trim()) return;
-
-            // Ignorar grupos (a menos que o bot seja mencionado)
-            if (jid.endsWith('@g.us') && !text.includes('@') && !text.startsWith('/')) return;
-
-            console.log(`📩 [${new Date().toLocaleTimeString()}] ${jid}: ${text.substring(0, 80)}`);
-
-            if (text.startsWith('/')) {
-                await this._handleCommand(jid, text.trim().toLowerCase());
-            } else {
-                await this._handleFlow(jid, text.trim());
-            }
-        } catch (err) {
-            console.error('❌ Erro processMessage:', err.message);
+async processMessage(msg) {
+    try {
+        // Extrair JID corretamente para Baileys
+        const jid = msg.key.remoteJid;
+        
+        // Extrair texto da mensagem
+        let text = '';
+        if (msg.message?.conversation) {
+            text = msg.message.conversation;
+        } else if (msg.message?.extendedTextMessage?.text) {
+            text = msg.message.extendedTextMessage.text;
+        } else if (msg.message?.imageWithCaption?.caption) {
+            text = msg.message.imageWithCaption.caption;
         }
+
+        if (!text || !text.trim()) return;
+
+        // 👇 ADICIONE ESTA PARTE PARA GRUPOS 👇
+        const isGroup = jid.endsWith('@g.us');
+        const botNumber = this.sock.user.id.split(':')[0];
+        
+        // Verificar se é grupo
+        if (isGroup) {
+            // Verificar se o bot foi mencionado
+            const isMentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.some(
+                j => j === this.sock.user.id
+            );
+            
+            // Verificar se o comando é direto ou com menção
+            const isCommand = text.startsWith('/');
+            const isBotMentioned = text.includes(`@${botNumber}`) || isMentioned;
+            
+            // // Se for comando mas não mencionou o bot, ignora
+            // if (isCommand && !isBotMentioned && !text.startsWith('/status') && !text.startsWith('/ajuda')) {
+            //     return; // Ignora comandos em grupo sem mencionar o bot
+            // }
+            
+            // Se for mensagem normal sem mencionar, ignora
+            if (!isCommand && !isBotMentioned) {
+                return;
+            }
+            
+            // Limpar texto: remover menção do bot se existir
+            text = text.replace(new RegExp(`@${botNumber}\\s*`, 'g'), '').trim();
+        }
+
+        console.log(`📩 [${new Date().toLocaleTimeString()}] ${isGroup ? 'GRUPO' : 'PV'} ${jid}: ${text.substring(0, 80)}`);
+
+        if (text.startsWith('/')) {
+            await this._handleCommand(jid, text.trim().toLowerCase(), isGroup);
+        } else {
+            await this._handleFlow(jid, text.trim());
+        }
+    } catch (err) {
+        console.error('❌ Erro processMessage:', err.message);
     }
+}
 
     // ─── COMANDOS ─────────────────────────────────────────────────────────────
 
-    async _handleCommand(jid, cmd) {
-        switch (cmd) {
-            case '/novo':
-            case '/start':
-                this._setSession(jid, STEPS.SELECIONAR_TIPO, {});
-                await this._send(jid, MSG.SELECIONAR_TIPO);
-                break;
+   async _handleCommand(jid, cmd, isGroup = false) {
+    switch (cmd) {
+        case '/novo':
+        case '/start':
+            this._setSession(jid, STEPS.SELECIONAR_TIPO, {});
+            await this._send(jid, MSG.SELECIONAR_TIPO);
+            break;
 
-            case '/cv':
-            case '/curriculo':
-                this._setSession(jid, STEPS.CV_NOME, { tipo: 'cv' });
-                await this._send(jid, MSG.CV_INICIO);
-                break;
+        case '/cv':
+        case '/curriculo':
+            this._setSession(jid, STEPS.CV_NOME, { tipo: 'cv' });
+            await this._send(jid, MSG.CV_INICIO);
+            break;
 
-            case '/carta':
-                this._setSession(jid, STEPS.CARTA_TIPO, { tipo: 'carta' });
-                await this._send(jid, MSG.CARTA_SELECIONAR);
-                break;
+        case '/carta':
+            this._setSession(jid, STEPS.CARTA_TIPO, { tipo: 'carta' });
+            await this._send(jid, MSG.CARTA_SELECIONAR);
+            break;
 
-            case '/relatorio':
-                this._setSession(jid, STEPS.RELATORIO_TITULO, { tipo: 'relatorio' });
-                await this._send(jid, MSG.RELATORIO_INICIO);
-                break;
+        case '/relatorio':
+            this._setSession(jid, STEPS.RELATORIO_TITULO, { tipo: 'relatorio' });
+            await this._send(jid, MSG.RELATORIO_INICIO);
+            break;
 
-            case '/documento':
-            case '/doc':
-                this._setSession(jid, STEPS.DOC_TIPO, { tipo: 'documento_simples' });
-                await this._send(jid, MSG.DOC_INICIO);
-                break;
+        case '/documento':
+        case '/doc':
+            this._setSession(jid, STEPS.DOC_TIPO, { tipo: 'documento_simples' });
+            await this._send(jid, MSG.DOC_INICIO);
+            break;
 
-            case '/ajuda':
-                await this._send(jid, MSG.AJUDA);
-                break;
+        case '/ajuda':
+            let ajudaMsg = MSG.AJUDA;
+            if (isGroup) {
+                ajudaMsg = `🤖 *BOT ACADÊMICO*\n\n` +
+                          `Para usar o bot neste grupo, me mencione junto com o comando:\n\n` +
+                          `@${this.sock.user.id.split(':')[0]} /novo\n\n` +
+                          `*Comandos disponíveis:*\n` +
+                          `/novo - Iniciar trabalho acadêmico\n` +
+                          `/cv - Criar currículo\n` +
+                          `/carta - Criar carta\n` +
+                          `/relatorio - Criar relatório\n` +
+                          `/documento - Criar documento simples\n` +
+                          `/status - Ver status\n` +
+                          `/cancelar - Cancelar\n` +
+                          `/ajuda - Esta mensagem`;
+            }
+            await this._send(jid, ajudaMsg);
+            break;
 
-            case '/status':
-                await this._send(jid, this._msgStatus(jid));
-                break;
+        case '/status':
+            await this._send(jid, this._msgStatus(jid));
+            break;
 
-            case '/cancelar':
-                this._clearSession(jid);
-                await this._send(jid, '❌ Operação cancelada.\n\nDigite */novo* ou outro comando para começar.');
-                break;
+        case '/cancelar':
+            this._clearSession(jid);
+            await this._send(jid, '❌ Operação cancelada.\n\nDigite */novo* ou outro comando para começar.');
+            break;
 
-            default:
-                await this._send(jid, '❓ Comando não reconhecido. Digite */ajuda* para ver os comandos disponíveis.');
-        }
+        default:
+            await this._send(jid, '❓ Comando não reconhecido. Digite */ajuda* para ver os comandos disponíveis.');
     }
-
+}
     // ─── FLUXO DE CONVERSAÇÃO ─────────────────────────────────────────────────
 
     async _handleFlow(jid, text) {
