@@ -1,4 +1,4 @@
-// src/bot.js - Versão para Baileys
+// src/bot.js - Versão completa com redirecionamento para PV
 const { AcademicAIService } = require('./ai-service'); 
 const { DocumentFormatter } = require('./formatter');
 const fs = require('fs');
@@ -88,132 +88,183 @@ class AcademicBot {
         this._saveSessions();
     }
 
+    // ─── REDIRECIONAR PARA PV ─────────────────────────────────────────────────
+
+    async _redirectToPrivate(jid, userJid, step, data, originalCommand) {
+        const isGroup = jid.endsWith('@g.us');
+        
+        if (!isGroup) return false;
+        
+        // Extrair o número do usuário
+        const userNumber = userJid.split('@')[0];
+        
+        // Mensagem no grupo avisando
+        await this._send(jid, `📱 *Redirecionando para o privado!*\n\n` +
+                              `Olá, vamos continuar a criação do *${originalCommand}* no nosso bate-papo privado para não poluir o grupo.\n\n` +
+                              `*Clique aqui para me chamar no privado:* wa.me/${userNumber}\n\n` +
+                              `_Assim que você enviar qualquer mensagem no privado, continuamos de onde paramos._`);
+        
+        // Verificar se já existe sessão no PV
+        const pvSession = this._getSession(userJid);
+        
+        // Se não tem sessão ativa no PV, copiar a sessão do grupo
+        if (pvSession.step === STEPS.IDLE) {
+            this._setSession(userJid, step, data);
+        }
+        
+        // Limpar sessão do grupo
+        this._clearSession(jid);
+        
+        return true;
+    }
+
     // ─── ENTRADA PRINCIPAL ────────────────────────────────────────────────────
 
-   // src/bot.js - Adicione/modifique esta parte
-
-async processMessage(msg) {
-    try {
-        // Extrair JID corretamente para Baileys
-        const jid = msg.key.remoteJid;
-        
-        // Extrair texto da mensagem
-        let text = '';
-        if (msg.message?.conversation) {
-            text = msg.message.conversation;
-        } else if (msg.message?.extendedTextMessage?.text) {
-            text = msg.message.extendedTextMessage.text;
-        } else if (msg.message?.imageWithCaption?.caption) {
-            text = msg.message.imageWithCaption.caption;
-        }
-
-        if (!text || !text.trim()) return;
-
-        // 👇 ADICIONE ESTA PARTE PARA GRUPOS 👇
-        const isGroup = jid.endsWith('@g.us');
-        const botNumber = this.sock.user.id.split(':')[0];
-        
-        // Verificar se é grupo
-        if (isGroup) {
-            // Verificar se o bot foi mencionado
-            const isMentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.some(
-                j => j === this.sock.user.id
-            );
+    async processMessage(msg) {
+        try {
+            const jid = msg.key.remoteJid;
             
-            // Verificar se o comando é direto ou com menção
-            const isCommand = text.startsWith('/');
-            const isBotMentioned = text.includes(`@${botNumber}`) || isMentioned;
-            
-            // // Se for comando mas não mencionou o bot, ignora
-            // if (isCommand && !isBotMentioned && !text.startsWith('/status') && !text.startsWith('/ajuda')) {
-            //     return; // Ignora comandos em grupo sem mencionar o bot
-            // }
-            
-            // Se for mensagem normal sem mencionar, ignora
-            if (!isCommand && !isBotMentioned) {
-                return;
+            let text = '';
+            if (msg.message?.conversation) {
+                text = msg.message.conversation;
+            } else if (msg.message?.extendedTextMessage?.text) {
+                text = msg.message.extendedTextMessage.text;
+            } else if (msg.message?.imageWithCaption?.caption) {
+                text = msg.message.imageWithCaption.caption;
             }
+
+            if (!text || !text.trim()) return;
+
+            const isGroup = jid.endsWith('@g.us');
+            const botNumber = this.sock.user.id.split(':')[0];
             
-            // Limpar texto: remover menção do bot se existir
-            text = text.replace(new RegExp(`@${botNumber}\\s*`, 'g'), '').trim();
-        }
+            if (isGroup) {
+                const isMentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.some(
+                    j => j === this.sock.user.id
+                );
+                
+                const isCommand = text.startsWith('/');
+                const isBotMentioned = text.includes(`@${botNumber}`) || isMentioned;
+                
+                // Se não mencionou o bot, ignora
+                if (!isCommand || !isBotMentioned) {
+                    return;
+                }
+                
+                // Limpar texto: remover menção do bot
+                text = text.replace(new RegExp(`@${botNumber}\\s*`, 'g'), '').trim();
+            }
 
-        console.log(`📩 [${new Date().toLocaleTimeString()}] ${isGroup ? 'GRUPO' : 'PV'} ${jid}: ${text.substring(0, 80)}`);
+            console.log(`📩 [${new Date().toLocaleTimeString()}] ${isGroup ? 'GRUPO' : 'PV'} ${jid}: ${text.substring(0, 80)}`);
 
-        if (text.startsWith('/')) {
-            await this._handleCommand(jid, text.trim().toLowerCase(), isGroup);
-        } else {
-            await this._handleFlow(jid, text.trim());
+            if (text.startsWith('/')) {
+                await this._handleCommand(jid, text.trim().toLowerCase(), isGroup);
+            } else {
+                await this._handleFlow(jid, text.trim());
+            }
+        } catch (err) {
+            console.error('❌ Erro processMessage:', err.message);
         }
-    } catch (err) {
-        console.error('❌ Erro processMessage:', err.message);
     }
-}
 
     // ─── COMANDOS ─────────────────────────────────────────────────────────────
 
-   async _handleCommand(jid, cmd, isGroup = false) {
-    switch (cmd) {
-        case '/novo':
-        case '/start':
-            this._setSession(jid, STEPS.SELECIONAR_TIPO, {});
-            await this._send(jid, MSG.SELECIONAR_TIPO);
-            break;
-
-        case '/cv':
-        case '/curriculo':
-            this._setSession(jid, STEPS.CV_NOME, { tipo: 'cv' });
-            await this._send(jid, MSG.CV_INICIO);
-            break;
-
-        case '/carta':
-            this._setSession(jid, STEPS.CARTA_TIPO, { tipo: 'carta' });
-            await this._send(jid, MSG.CARTA_SELECIONAR);
-            break;
-
-        case '/relatorio':
-            this._setSession(jid, STEPS.RELATORIO_TITULO, { tipo: 'relatorio' });
-            await this._send(jid, MSG.RELATORIO_INICIO);
-            break;
-
-        case '/documento':
-        case '/doc':
-            this._setSession(jid, STEPS.DOC_TIPO, { tipo: 'documento_simples' });
-            await this._send(jid, MSG.DOC_INICIO);
-            break;
-
-        case '/ajuda':
-            let ajudaMsg = MSG.AJUDA;
-            if (isGroup) {
-                ajudaMsg = `🤖 *BOT ACADÊMICO*\n\n` +
-                          `Para usar o bot neste grupo, me mencione junto com o comando:\n\n` +
-                          `@${this.sock.user.id.split(':')[0]} /novo\n\n` +
-                          `*Comandos disponíveis:*\n` +
-                          `/novo - Iniciar trabalho acadêmico\n` +
-                          `/cv - Criar currículo\n` +
-                          `/carta - Criar carta\n` +
-                          `/relatorio - Criar relatório\n` +
-                          `/documento - Criar documento simples\n` +
-                          `/status - Ver status\n` +
-                          `/cancelar - Cancelar\n` +
-                          `/ajuda - Esta mensagem`;
+    async _handleCommand(jid, cmd, isGroup = false) {
+        // Se for grupo e for comando que inicia fluxo, redireciona para PV
+        if (isGroup && ['/novo', '/cv', '/carta', '/relatorio', '/documento', '/start'].includes(cmd)) {
+            const userJid = jid.replace('@g.us', '@s.whatsapp.net');
+            const commandName = cmd.replace('/', '');
+            
+            // Inicia a sessão no grupo temporariamente
+            switch (cmd) {
+                case '/novo':
+                case '/start':
+                    this._setSession(jid, STEPS.SELECIONAR_TIPO, {});
+                    break;
+                case '/cv':
+                    this._setSession(jid, STEPS.CV_NOME, { tipo: 'cv' });
+                    break;
+                case '/carta':
+                    this._setSession(jid, STEPS.CARTA_TIPO, { tipo: 'carta' });
+                    break;
+                case '/relatorio':
+                    this._setSession(jid, STEPS.RELATORIO_TITULO, { tipo: 'relatorio' });
+                    break;
+                case '/documento':
+                    this._setSession(jid, STEPS.DOC_TIPO, { tipo: 'documento_simples' });
+                    break;
             }
-            await this._send(jid, ajudaMsg);
-            break;
+            
+            // Redirecionar para PV
+            const session = this._getSession(jid);
+            await this._redirectToPrivate(jid, userJid, session.step, session.data, commandName);
+            return;
+        }
+        
+        // Comandos normais (PV ou ajuda/status em grupo)
+        switch (cmd) {
+            case '/novo':
+            case '/start':
+                this._setSession(jid, STEPS.SELECIONAR_TIPO, {});
+                await this._send(jid, MSG.SELECIONAR_TIPO);
+                break;
 
-        case '/status':
-            await this._send(jid, this._msgStatus(jid));
-            break;
+            case '/cv':
+            case '/curriculo':
+                this._setSession(jid, STEPS.CV_NOME, { tipo: 'cv' });
+                await this._send(jid, MSG.CV_INICIO);
+                break;
 
-        case '/cancelar':
-            this._clearSession(jid);
-            await this._send(jid, '❌ Operação cancelada.\n\nDigite */novo* ou outro comando para começar.');
-            break;
+            case '/carta':
+                this._setSession(jid, STEPS.CARTA_TIPO, { tipo: 'carta' });
+                await this._send(jid, MSG.CARTA_SELECIONAR);
+                break;
 
-        default:
-            await this._send(jid, '❓ Comando não reconhecido. Digite */ajuda* para ver os comandos disponíveis.');
+            case '/relatorio':
+                this._setSession(jid, STEPS.RELATORIO_TITULO, { tipo: 'relatorio' });
+                await this._send(jid, MSG.RELATORIO_INICIO);
+                break;
+
+            case '/documento':
+            case '/doc':
+                this._setSession(jid, STEPS.DOC_TIPO, { tipo: 'documento_simples' });
+                await this._send(jid, MSG.DOC_INICIO);
+                break;
+
+            case '/ajuda':
+                let ajudaMsg = MSG.AJUDA;
+                if (isGroup) {
+                    const botNumber = this.sock.user.id.split(':')[0];
+                    ajudaMsg = `🤖 *BOT ACADÊMICO*\n\n` +
+                              `Para usar o bot, me chame no privado ou me mencione no grupo:\n\n` +
+                              `📱 *Me chame no privado:* wa.me/${botNumber}\n\n` +
+                              `*Comandos disponíveis:*\n` +
+                              `/novo - Iniciar trabalho acadêmico\n` +
+                              `/cv - Criar currículo\n` +
+                              `/carta - Criar carta\n` +
+                              `/relatorio - Criar relatório\n` +
+                              `/documento - Criar documento simples\n` +
+                              `/status - Ver status\n` +
+                              `/cancelar - Cancelar\n` +
+                              `/ajuda - Esta mensagem`;
+                }
+                await this._send(jid, ajudaMsg);
+                break;
+
+            case '/status':
+                await this._send(jid, this._msgStatus(jid));
+                break;
+
+            case '/cancelar':
+                this._clearSession(jid);
+                await this._send(jid, '❌ Operação cancelada.\n\nDigite */novo* ou outro comando para começar.');
+                break;
+
+            default:
+                await this._send(jid, '❓ Comando não reconhecido. Digite */ajuda* para ver os comandos disponíveis.');
+        }
     }
-}
+
     // ─── FLUXO DE CONVERSAÇÃO ─────────────────────────────────────────────────
 
     async _handleFlow(jid, text) {
@@ -221,6 +272,16 @@ async processMessage(msg) {
         const { step, data } = session;
         const t = text.trim();
         const tLow = t.toLowerCase();
+        const isGroup = jid.endsWith('@g.us');
+        
+        // Redirecionar para PV se for grupo e tem sessão ativa
+        if (isGroup && step !== STEPS.IDLE) {
+            const userJid = jid.replace('@g.us', '@s.whatsapp.net');
+            const originalCommand = data.tipo === 'academico' ? 'documento' : (data.tipo || 'documento');
+            
+            await this._redirectToPrivate(jid, userJid, step, data, originalCommand);
+            return;
+        }
 
         if (['cancelar', 'sair', 'cancel'].includes(tLow)) {
             this._clearSession(jid);
@@ -237,7 +298,6 @@ async processMessage(msg) {
                 await this._handleTipoDocumento(jid, tLow, data);
                 break;
 
-            // ─── TRABALHO ACADÊMICO ──────────────────────────────────────────
             case STEPS.TEMA:
                 await this._handleAcademicFlow(jid, t, data);
                 break;
@@ -269,7 +329,6 @@ async processMessage(msg) {
                 await this._handleAno(jid, t, data);
                 break;
 
-            // ─── CURRÍCULO ───────────────────────────────────────────────────
             case STEPS.CV_NOME:
                 data.nome = t;
                 this._setSession(jid, STEPS.CV_CARGO, data);
@@ -301,7 +360,6 @@ async processMessage(msg) {
                 await this._send(jid, this._msgConfirmarCV(data));
                 break;
 
-            // ─── CARTA ───────────────────────────────────────────────────────
             case STEPS.CARTA_TIPO:
                 await this._handleTipoCarta(jid, tLow, data);
                 break;
@@ -321,7 +379,6 @@ async processMessage(msg) {
                 await this._send(jid, this._msgConfirmarCarta(data));
                 break;
 
-            // ─── RELATÓRIO ───────────────────────────────────────────────────
             case STEPS.RELATORIO_TITULO:
                 data.titulo_relatorio = t;
                 this._setSession(jid, STEPS.RELATORIO_PERIODO, data);
@@ -338,7 +395,6 @@ async processMessage(msg) {
                 await this._send(jid, this._msgConfirmarRelatorio(data));
                 break;
 
-            // ─── DOCUMENTO SIMPLES ───────────────────────────────────────────
             case STEPS.DOC_TIPO:
                 await this._handleTipoDocumentoSimples(jid, tLow, data);
                 break;
@@ -353,7 +409,6 @@ async processMessage(msg) {
                 await this._send(jid, this._msgConfirmarDocumento(data));
                 break;
 
-            // ─── CONFIRMAR E GERAR ───────────────────────────────────────────
             case STEPS.CONFIRMAR:
                 if (['sim', 's', 'yes', 'ok', '1'].includes(tLow)) {
                     this._setSession(jid, STEPS.GERANDO, data);
@@ -559,7 +614,6 @@ async processMessage(msg) {
             const fileName = this._getFileName(content, data);
             const caption = this._getCaption(content, data);
             
-            // Enviar documento via Baileys
             await this.sock.sendMessage(jid, {
                 document: buffer,
                 mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -645,6 +699,14 @@ async processMessage(msg) {
 
     async _send(jid, text) {
         try {
+            const isGroup = jid.endsWith('@g.us');
+            
+            // Se for grupo, adicionar dica
+            if (isGroup) {
+                const botNumber = this.sock.user.id.split(':')[0];
+                text = text + `\n\n_💡 Dica: Para usar o bot, me chame no privado: wa.me/${botNumber}_`;
+            }
+            
             await this.sock.sendMessage(jid, { text });
         } catch (err) {
             console.error('❌ Erro ao enviar mensagem:', err.message);
