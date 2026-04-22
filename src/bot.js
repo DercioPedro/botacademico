@@ -1,5 +1,5 @@
 // src/bot.js - Versão para Baileys
-const { AcademicAIService } = require('./ai-service');
+const { AcademicAIService } = require('./ai-service'); 
 const { DocumentFormatter } = require('./formatter');
 const fs = require('fs');
 const path = require('path');
