@@ -1,0 +1,25 @@
+{
+  "name": "bot-academico-whatsapp",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp para gerar documentos com IA",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+    
+  },
+
+  "engines": {
+    "node": ">=18.x"
+  },
+  
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.6.0",
+    "axios": "^1.6.0",
+    "docx": "^8.5.0",
+    "dotenv": "^16.3.0",
+    "pino": "^8.17.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
