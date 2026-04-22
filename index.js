@@ -42,7 +42,9 @@ server.listen(PORT, () => {
 const AUTH_FOLDER = './auth_info_baileys';
 const RECONNECT_DELAY_MS = 5000;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 20;
+const MAX_RECONNECT_ATTEMPTS = 0; // 0 = infinitas tentativas
+let currentSock = null;
+let isReconnecting = false;
 
 // ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
 
@@ -52,7 +54,6 @@ async function startBot() {
     console.log('   WhatsApp + IA (Groq)');
     console.log('═══════════════════════════════════════\n');
 
-    // Verificar qual API key está configurada
     if (!process.env.GROQ_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         console.warn('⚠️  AVISO: Nenhuma API key configurada!');
         console.warn('   Configure GROQ_API_KEY ou ANTHROPIC_API_KEY no .env');
@@ -78,6 +79,7 @@ async function startBot() {
             defaultQueryTimeoutMs: 60000
         });
 
+        currentSock = sock;
         const bot = new AcademicBot(sock);
 
         // ─── EVENTOS DE CONEXÃO ───────────────────────────────────────────────────
@@ -89,6 +91,7 @@ async function startBot() {
                 console.log('📱 Escaneie o QR Code abaixo com o WhatsApp:\n');
                 qrcode.generate(qr, { small: true });
                 console.log('\n_Abra WhatsApp → Configurações → Aparelhos conectados → Conectar um aparelho_\n');
+                console.log('⏳ QR Code válido por ~20 segundos. Escaneie rapidamente!\n');
                 reconnectAttempts = 0;
             }
 
@@ -112,16 +115,16 @@ async function startBot() {
                 console.log('  /status  — Ver status');
                 console.log('  /cancelar — Cancelar\n');
                 reconnectAttempts = 0;
+                isReconnecting = false;
             }
 
             if (connection === 'close') {
                 const err = lastDisconnect?.error;
                 const statusCode = err instanceof Boom ? err.output?.statusCode : 500;
                 
-                // Mapear códigos de erro
                 let reason = '';
-                if (statusCode === 515) reason = 'restartRequired (Reconexão necessária)';
-                else if (statusCode === DisconnectReason.loggedOut) reason = 'loggedOut (Sessão expirada)';
+                if (statusCode === 515) reason = 'restartRequired';
+                else if (statusCode === DisconnectReason.loggedOut) reason = 'loggedOut';
                 else if (statusCode === DisconnectReason.connectionClosed) reason = 'connectionClosed';
                 else if (statusCode === DisconnectReason.connectionLost) reason = 'connectionLost';
                 else if (statusCode === DisconnectReason.timedOut) reason = 'timedOut';
@@ -129,22 +132,24 @@ async function startBot() {
 
                 console.log(`\n❌ Conexão encerrada. Razão: ${reason}`);
 
-                // Para TODOS os erros, tentar reconectar
-                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                // NÃO limpar a sessão! Apenas tentar reconectar
+                // Se for erro de restartRequired ou loggedOut, ainda assim mantém a sessão
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log('⚠️ Sessão expirada. Um novo QR Code será gerado na próxima tentativa.');
+                    console.log('   Mantendo arquivos de sessão para tentar novamente.\n');
+                }
+
+                // Reconectar SEMPRE, sem limite de tentativas
+                if (!isReconnecting) {
+                    isReconnecting = true;
                     reconnectAttempts++;
-                    const delay = Math.min(RECONNECT_DELAY_MS * reconnectAttempts, 30000);
-                    console.log(`🔄 Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} em ${delay/1000}s...`);
+                    const delay = 5000; // 5 segundos fixo
+                    console.log(`🔄 Tentando reconectar em ${delay/1000}s... (tentativa ${reconnectAttempts})`);
                     
-                    // Se for erro de sessão expirada, limpar pasta
-                    if (statusCode === DisconnectReason.loggedOut || statusCode === 515) {
-                        console.log('🧹 Limpando sessão antiga...');
-                        try { fs.rmSync(AUTH_FOLDER, { recursive: true, force: true }); } catch (_) {}
-                    }
-                    
-                    setTimeout(() => startBot(), delay);
-                } else {
-                    console.log('❌ Máximo de tentativas atingido.');
-                    console.log('   Reinicie manualmente com: node index.js\n');
+                    setTimeout(() => {
+                        isReconnecting = false;
+                        startBot();
+                    }, delay);
                 }
             }
         });
@@ -184,10 +189,13 @@ async function startBot() {
 
     } catch (err) {
         console.error('❌ Erro ao iniciar bot:', err.message);
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
-            console.log(`🔄 Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} em 10s...`);
-            setTimeout(() => startBot(), 10000);
+        if (!isReconnecting) {
+            isReconnecting = true;
+            console.log(`🔄 Tentando reiniciar em 10s...`);
+            setTimeout(() => {
+                isReconnecting = false;
+                startBot();
+            }, 10000);
         }
     }
 }
@@ -196,12 +204,24 @@ async function startBot() {
 
 process.on('uncaughtException', (err) => {
     console.error('💥 Erro não tratado:', err.message);
-    setTimeout(() => startBot(), 5000);
+    if (!isReconnecting) {
+        isReconnecting = true;
+        setTimeout(() => {
+            isReconnecting = false;
+            startBot();
+        }, 5000);
+    }
 });
 
 process.on('unhandledRejection', (reason) => {
     console.error('💥 Promise rejeitada:', reason?.message || reason);
-    setTimeout(() => startBot(), 5000);
+    if (!isReconnecting) {
+        isReconnecting = true;
+        setTimeout(() => {
+            isReconnecting = false;
+            startBot();
+        }, 5000);
+    }
 });
 
 process.on('SIGINT', () => {
